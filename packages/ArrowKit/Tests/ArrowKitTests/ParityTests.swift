@@ -76,6 +76,24 @@ struct ParityTests {
         }
     }
 
+    @Test("Skipped queries come back NaN; the rest are answered as without skipping")
+    func skippedQueries() throws {
+        let model = try Self.float32.get()
+        let encode = try Fixture("encode"), decode = try Fixture("decode")
+        let encoded = model.encode(encode["images"])
+        let queries = decode.queries()
+        let skipped = (0 ..< queries.count).map { $0 % 3 == 1 }
+        let all = try model.decode(queries, encoded: encoded, chunk: 7)
+        let some = try model.decode(queries, encoded: encoded, chunk: 7, skipped: skipped)
+        for i in 0 ..< queries.count {
+            if skipped[i] {
+                #expect(some.points[i].x.isNaN && some.confidence[i].isNaN)
+            } else {
+                #expect(simd_distance(some.points[i], all.points[i]) < 1e-5)
+            }
+        }
+    }
+
     @Test("Keys and values recomputed per batch give the cached encoding's answers")
     func recomputedMemories() throws {
         let model = try Self.float32.get()

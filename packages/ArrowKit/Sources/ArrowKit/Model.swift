@@ -34,6 +34,11 @@ public struct Queries: Sendable {
     func slice(_ range: Range<Int>) -> Queries {
         Queries(xy: Array(xy[range]), source: Array(source[range]), target: Array(target[range]), reference: Array(reference[range]))
     }
+
+    func select(_ indices: [Int]) -> Queries {
+        Queries(xy: indices.map { xy[$0] }, source: indices.map { source[$0] },
+                target: indices.map { target[$0] }, reference: indices.map { reference[$0] })
+    }
 }
 
 /// The decoder's answers, one row per query, in float32.
@@ -72,6 +77,14 @@ public struct Predictions: Sendable {
     mutating func append(_ other: Predictions) {
         points += other.points; confidence += other.confidence; uv += other.uv
         visibility += other.visibility; normals += other.normals; displacement += other.displacement
+    }
+
+    /// Writes `other`'s answers, in order, over the queries at `indices`.
+    mutating func scatter(_ other: Predictions, at indices: [Int]) {
+        for (k, i) in indices.enumerated() {
+            points[i] = other.points[k]; confidence[i] = other.confidence[k]; uv[i] = other.uv[k]
+            visibility[i] = other.visibility[k]; normals[i] = other.normals[k]; displacement[i] = other.displacement[k]
+        }
     }
 
     /// Writes `other`'s answers over the queries from `start` on.

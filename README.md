@@ -46,6 +46,8 @@ Either way, a run takes at most 300 frames. **Add Camera…** adds another video
 - **Camera poses**: a rigid fit and intrinsics per frame.
 - **Video depth**: each frame in its own camera.
 
+**Skip sky** (off by default) leaves sky pixels unasked, as upstream does, so outdoor clips lose their stray far points. The segmenter is upstream's [skyseg](https://huggingface.co/JianyuanWang/skyseg) converted to Core ML ([melmass/skyseg-coreml](https://huggingface.co/melmass/skyseg-coreml), 84 MB, downloaded on first use) and runs on the Neural Engine at about 17 ms per frame.
+
 **Seeds.** Drag a region on the frame to bound the seed grid, or click points to track exactly those pixels. Seeds belong to the frame they were placed on, and tracks start from that frame. **Inspect…** zooms in to 1600% to check the exact query pixels.
 
 **Display.** These follow the upstream viewer:

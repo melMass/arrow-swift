@@ -87,12 +87,14 @@ public final class ArrowModel: @unchecked Sendable {
 
     /// Answers `queries` in chunks of `chunk`, handing each chunk's answers and the
     /// position of its first query to `answered`, then the fraction done to `progress`.
-    /// Cancellation is checked between chunks.
+    /// Queries marked in `skipped` (sky, `SkyMask.skipped`) are not decoded and come back
+    /// NaN, as upstream's do. Cancellation is checked between chunks.
     public func decode(
-        _ queries: Queries, encoded: Encoded, chunk: Int = 16_384,
+        _ queries: Queries, encoded: Encoded, chunk: Int = 16_384, skipped: [Bool]? = nil,
         answered: (Int, Predictions) -> Void = { _, _ in },
         progress: (Double) -> Void = { _ in }
     ) throws -> Predictions {
+        precondition(skipped == nil || skipped?.count == queries.count)
         let padded = QueryEmbedding.padImages(encoded.images)
         var result = Predictions()
         result.points.reserveCapacity(queries.count)
@@ -100,9 +102,17 @@ public final class ArrowModel: @unchecked Sendable {
         while start < queries.count {
             try Task.checkCancellation()
             let end = min(start + chunk, queries.count)
-            let raw = network.decode(queries.slice(start ..< end), encoded: encoded, padded: padded, dtype: precision.dtype)
-            eval(Array(raw.values))
-            let answers = Self.predictions(raw)
+            let kept = (start ..< end).filter { !(skipped?[$0] ?? false) }
+            var answers = Predictions.unanswered(end - start)
+            if kept.count == end - start {
+                let raw = network.decode(queries.slice(start ..< end), encoded: encoded, padded: padded, dtype: precision.dtype)
+                eval(Array(raw.values))
+                answers = Self.predictions(raw)
+            } else if !kept.isEmpty {
+                let raw = network.decode(queries.select(kept), encoded: encoded, padded: padded, dtype: precision.dtype)
+                eval(Array(raw.values))
+                answers.scatter(Self.predictions(raw), at: kept.map { $0 - start })
+            }
             result.append(answers)
             answered(start, answers)
             start = end

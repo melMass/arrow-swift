@@ -13,6 +13,9 @@ public struct ArrowResult: Sendable {
     public var cameras: [CameraEstimate]?
     public var encodeSeconds: Double
     public var decodeSeconds: Double
+    /// The sky the run skipped: its queries were not decoded and are NaN. Not saved in
+    /// archives; the NaN answers are.
+    public var sky: SkyMask?
 
     public init(
         frames: FrameSet, queries: Queries, predictions: Predictions, groups: [QueryGroup],
@@ -78,10 +81,12 @@ public actor ArrowRunner {
     }
 
     /// Runs `tasks` on `frames`, encoding them unless the last run had the same frames.
+    /// Queries whose source pixel is in `sky` (`SkySegmenter.mask`) are skipped.
     public func run(
         _ frames: FrameSet, tasks: [ArrowTask], settings: TaskSettings = TaskSettings(), chunk: Int = 8192,
-        progress: @Sendable @escaping (ArrowEvent) -> Void = { _ in }
+        sky: SkyMask? = nil, progress: @Sendable @escaping (ArrowEvent) -> Void = { _ in }
     ) throws -> ArrowResult {
+        precondition(sky.map { $0.width == frames.width && $0.height == frames.height && $0.frames == frames.images.count } ?? true)
         let cacheLimit = Memory.cacheLimit
         Memory.cacheLimit = 1 << 30
         defer { Memory.cacheLimit = cacheLimit }
@@ -102,17 +107,20 @@ public actor ArrowRunner {
 
         let (queries, groups) = settings.queries(tasks, frames: frames.images.count, views: frames.views, width: frames.width, height: frames.height)
         let decodeStart = Date()
-        progress(.started(ArrowResult(
+        var skeleton = ArrowResult(
             frames: frames, queries: queries, predictions: .unanswered(queries.count), groups: groups,
-            encodeSeconds: encodeSeconds)))
+            encodeSeconds: encodeSeconds)
+        skeleton.sky = sky
+        progress(.started(skeleton))
         progress(.decoding(0))
         let predictions = try model.decode(
-            queries, encoded: encoding, chunk: chunk,
+            queries, encoded: encoding, chunk: chunk, skipped: sky?.skipped(queries),
             answered: { progress(.answered(start: $0, $1)) },
             progress: { progress(.decoding($0)) })
         var result = ArrowResult(
             frames: frames, queries: queries, predictions: predictions, groups: groups, cameras: nil,
             encodeSeconds: encodeSeconds, decodeSeconds: Date().timeIntervalSince(decodeStart))
+        result.sky = sky
         if let pose = result.group(.pose), let reference = pose.reference {
             let range = pose.start ..< pose.start + pose.count
             var block = Predictions()
