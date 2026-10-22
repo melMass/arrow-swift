@@ -1,6 +1,6 @@
 # arrow-swift
 
-[ARROW](https://github.com/ifradlin/arrow) ([paper](https://arxiv.org/abs/2610.01314)) running natively on Apple silicon with [MLX](https://github.com/ml-explore/mlx-swift): 3D reconstruction, 3D point tracking, camera poses and depth from a video, a photo set, or several synchronized videos of one scene. The repository also holds **Quiver**, a Mac app for running the model and looking at what it predicts.
+[ARROW](https://github.com/ifradlin/arrow) ([paper](https://arxiv.org/abs/2610.01314), [weights](https://huggingface.co/ifradlin/arrow)) running natively on Apple silicon with [MLX](https://github.com/ml-explore/mlx-swift): 3D reconstruction, 3D point tracking, camera poses and depth from a video, a photo set, or several synchronized videos of one scene. The repository also holds **Quiver**, a Mac app for running the model and looking at what it predicts.
 
 <p align="center">
   <img width="480" alt="quiver" src="https://github.com/user-attachments/assets/f211a940-3745-409b-8717-636abbbb2fa5" />
@@ -13,17 +13,20 @@ This is an independent port. The model, its weights and the method are the work 
 
 ## Requirements
 
-- A Mac with Apple silicon, macOS 15 or later, and Xcode 16 or later.
+- A Mac with Apple silicon and macOS 15 or later; Xcode 16 or later to build from source.
 - About 16 GB of memory for clips of up to a few dozen frames. See [Long clips](#long-clips) for more.
 - The weights, [`ifradlin/arrow`](https://huggingface.co/ifradlin/arrow) (5.3 GB). They download into the Hugging Face cache on first run, and an existing cache from the Python tools is reused.
 
 ## Demo App (Quiver)
 <p align="center">
-  <img width="128" height="128" alt=“the quiver mac demo app icon" src="https://github.com/user-attachments/assets/bc7f9ceb-b7bf-4000-b9f2-abd679c8667e" />
+  <img width="128" height="128" alt="the quiver mac demo app icon" src="https://github.com/user-attachments/assets/bc7f9ceb-b7bf-4000-b9f2-abd679c8667e" />
 </p>
 
 <img width="2052" height="1374" alt="demo app screenshot: moving vs separate-tracks"  src="https://github.com/user-attachments/assets/91f9159f-5f82-4f21-ada0-e9fa10cefb30" />
 
+**[Download the latest Quiver for Mac](https://github.com/melMass/arrow-swift/releases/latest)**: signed and notarized, for Apple silicon on macOS 15 or later. Unzip and open it; the weights download on the first run.
+
+To build it yourself instead:
 
 ```sh
 scripts/build-app.sh --open
