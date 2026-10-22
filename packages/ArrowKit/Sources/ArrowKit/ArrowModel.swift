@@ -66,12 +66,23 @@ public final class ArrowModel: @unchecked Sendable {
     }
 
     /// Encodes `images` [1, frames, 3, H, W] in [0, 1] (H and W multiples of 14).
-    public func encode(_ images: MLXArray) -> Encoded {
+    ///
+    /// The decoder's keys and values (8 blocks × 2 × tokens × 1280) are computed once and
+    /// held when they fit `memoryBudget` bytes: about 30 MB per frame at 504 × 280 in
+    /// fp16. Past it, only the projected patches are held, a sixteenth of that, and each
+    /// query batch recomputes the keys and values block by block: the same answers for
+    /// some time per batch.
+    public func encode(_ images: MLXArray, memoryBudget: Int = 2 << 30) -> Encoded {
         let dtype = precision.dtype
         let (patches, ids, reference) = network.encoder(images, dtype: dtype)
         eval(patches, ids)
-        let memories = network.memories(patches)
-        return Encoded(images: images.asType(.float32), ids: ids, memories: memories, reference: reference)
+        let context = network.context(patches)
+        eval(context)
+        let tokens = context.dim(1), blocks = network.decoder.blocks.count
+        let memoryBytes = blocks * 2 * tokens * ArrowNetwork.decoderDim * dtype.size
+        let memories = memoryBytes <= memoryBudget ? network.memories(context) : nil
+        return Encoded(images: images.asType(.float32), ids: ids, context: memories == nil ? context : nil,
+                       memories: memories, reference: reference)
     }
 
     /// Answers `queries` in chunks of `chunk`, reporting the fraction done after each.

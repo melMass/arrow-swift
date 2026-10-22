@@ -95,7 +95,9 @@ let frames = try await FrameSet.load(views: [.video(left), .video(right)],
 
 ARROW's encoder attends across every frame, and every query reads every frame's patches. Memory and time therefore grow with the number of frames, and a query costs more the more frames there are.
 
-On an M1 Pro (16 GB), 8 frames at 504 × 280 encode in about 8 s, and 95,000 queries take about 16 s. The decoder's keys and values alone take about 30 MB per frame at 504 px, or about 7 MB per frame at 252 px, on top of 2.6 GB of fp16 weights. A few hundred frames need a smaller long side, a coarse seed grid, or more memory than a 16 GB Mac has. The 300-frame limit is the app's, not the model's.
+On an M1 Pro (16 GB), 8 frames at 504 × 280 encode in about 8 s, and 95,000 queries take about 16 s.
+
+The decoder's keys and values take about 30 MB per frame at 504 px, on top of 2.6 GB of fp16 weights. Up to 2 GB of them (about 70 frames at 504 px) are computed once and kept. Past that, only the projected patches are kept, a sixteenth of the size, and each batch of queries recomputes the keys and values one block at a time. The answers are identical, and each batch takes a little longer. `ArrowModel.encode(_:memoryBudget:)` sets the limit. Time still grows with the number of frames, because every query reads all of them. The 300-frame limit is the app's, not the model's.
 
 ## Tests
 

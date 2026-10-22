@@ -1,5 +1,6 @@
 import Foundation
 import MLX
+import simd
 import Testing
 @testable import ArrowKit
 
@@ -73,5 +74,20 @@ struct ParityTests {
             print(key, error)
             #expect(error.cosine > 0.9999, "\(key)")
         }
+    }
+
+    @Test("Keys and values recomputed per batch give the cached encoding's answers")
+    func recomputedMemories() throws {
+        let model = try Self.float32.get()
+        let encode = try Fixture("encode"), decode = try Fixture("decode")
+        let cached = model.encode(encode["images"])
+        let streamed = model.encode(encode["images"], memoryBudget: 0)
+        #expect(cached.cachesMemories && !streamed.cachesMemories)
+        let queries = decode.queries()
+        let a = try model.decode(queries, encoded: cached), b = try model.decode(queries, encoded: streamed)
+        let gap = zip(a.points, b.points).map { simd_distance($0, $1) }.max() ?? 0
+        print("largest point difference", gap)
+        #expect(gap < 1e-4)
+        #expect(a.visibility == b.visibility || zip(a.visibility, b.visibility).allSatisfy { abs($0 - $1) < 1e-4 })
     }
 }

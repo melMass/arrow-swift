@@ -68,17 +68,25 @@ public final class Encoded: @unchecked Sendable {
     let images: MLXArray
     /// [1, frames, 3072].
     let ids: MLXArray
-    /// One per decoder block.
-    let memories: [CrossMemory]
+    /// The patches projected to the decoder's width, [1, tokens, 1280], kept when the
+    /// blocks' keys and values are not: each query batch then recomputes them per block.
+    let context: MLXArray?
+    /// One per decoder block, when they fit `ArrowModel.encode`'s budget.
+    let memories: [CrossMemory]?
     public let frames: Int
     public let height: Int
     public let width: Int
     /// The frame DA3 put first, nil under three frames.
     public let reference: Int?
 
-    init(images: MLXArray, ids: MLXArray, memories: [CrossMemory], reference: Int?) {
+    /// Whether the decoder's keys and values are held, rather than recomputed per batch.
+    public var cachesMemories: Bool { memories != nil }
+
+    init(images: MLXArray, ids: MLXArray, context: MLXArray?, memories: [CrossMemory]?, reference: Int?) {
+        precondition(context != nil || memories != nil)
         self.images = images
         self.ids = ids
+        self.context = context
         self.memories = memories
         self.reference = reference
         frames = images.dim(1)
@@ -239,22 +247,32 @@ final class ArrowNetwork: Module {
         _heads.wrappedValue = Heads(Self.decoderDim)
     }
 
-    /// The decoder blocks' keys and values over `patches` [1, frames, patches, 3072].
-    func memories(_ patches: MLXArray) -> [CrossMemory] {
-        let flat = patches.reshaped(1, -1, 2 * Encoder.dim)
-        let context = contextProj(flat)
-        return decoder.blocks.map { block in
+    /// `patches` [1, frames, patches, 3072] projected to the decoder's width: [1, tokens, 1280].
+    func context(_ patches: MLXArray) -> MLXArray {
+        contextProj(patches.reshaped(1, -1, 2 * Encoder.dim))
+    }
+
+    /// The decoder blocks' keys and values over a projected context.
+    func memories(_ context: MLXArray) -> [CrossMemory] {
+        decoder.blocks.map { block in
             let memory = block.memory(context)
             eval(memory.keys, memory.values)
             return memory
         }
     }
 
-    /// Raw head outputs for one batch of queries.
+    /// Raw head outputs for one batch of queries. Without cached keys and values, each
+    /// block computes its own from the context and the batch is evaluated block by block,
+    /// so only one block's keys and values exist at a time.
     func decode(_ queries: Queries, encoded: Encoded, padded: MLXArray, dtype: DType) -> [String: MLXArray] {
         var tokens = queryEmbed(queries, encoded: encoded, padded: padded, dtype: dtype)
-        for (block, memory) in zip(decoder.blocks, encoded.memories) {
-            tokens = block(tokens, memory: memory)
+        for (index, block) in decoder.blocks.enumerated() {
+            if let memories = encoded.memories {
+                tokens = block(tokens, memory: memories[index])
+            } else if let context = encoded.context {
+                tokens = block(tokens, memory: block.memory(context))
+                eval(tokens)
+            }
         }
         let f = { (head: Head) in head(tokens).asType(.float32) }
         let normals = f(heads.normals)
