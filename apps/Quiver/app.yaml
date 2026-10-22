@@ -1,0 +1,7 @@
+# ARROW runs in-process on MLX, whose Metal shaders SwiftPM cannot compile
+# into an app: xcodebuild builds it.
+kind: mlx
+bundle_id: com.mtb.quiver
+version: "0.1.0"
+category: public.app-category.graphics-design
+min_os: "15.0"
