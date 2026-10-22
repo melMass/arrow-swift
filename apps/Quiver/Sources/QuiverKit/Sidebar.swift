@@ -138,9 +138,9 @@ struct Sidebar: View {
 
             Section("Output") {
                 Button("Save Result…", systemImage: "square.and.arrow.down", action: QuiverApp.savePanel(session))
-                    .disabled(session.result == nil)
+                    .disabled(session.result == nil || session.streaming)
                 Button("Export USD…", systemImage: "cube", action: QuiverApp.exportPanel(session))
-                    .disabled(session.result == nil)
+                    .disabled(session.result == nil || session.streaming)
                     .help("Points, tracks over time, trajectories and cameras as a .usda stage, filtered as shown")
             }
         }

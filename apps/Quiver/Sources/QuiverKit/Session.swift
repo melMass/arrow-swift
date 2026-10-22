@@ -115,6 +115,12 @@ final class Session {
     private(set) var tracks: TrackSet?
     private(set) var statistics: TrackStatistics?
     private(set) var sceneDiagonal: Float = 1
+    /// Changes when the viewport should frame the scene anew: once per run or opened result.
+    private(set) var sceneID = 0
+    /// A run's answers are arriving; `result` holds them so far.
+    private(set) var streaming = false
+    /// The current run's scene has been framed.
+    private var framed = false
 
     private var runner: ArrowRunner?
     private var job: Task<Void, Never>?
@@ -272,19 +278,28 @@ final class Session {
         let ordered = ArrowTask.allCases.filter(tasks.contains)
         let settings = runSettings(for: frames)
         job = Task {
+            // Events reach the session in the order the run sends them: a chunk's answers
+            // never land before the run that holds them, nor after its finished result.
+            let (events, sink) = AsyncStream.makeStream(of: ArrowEvent.self)
+            let consumer = Task { for await event in events { self.show(event) } }
+            defer { sink.finish() }
             do {
-                let progress: @Sendable (ArrowEvent) -> Void = { event in
-                    Task { @MainActor in self.show(event) }
-                }
+                let progress: @Sendable (ArrowEvent) -> Void = { sink.yield($0) }
                 if runner == nil { runner = try await ArrowRunner.load(progress: progress) }
                 guard let runner else { return }
-                let result = try await runner.run(frames, tasks: ordered, settings: settings, progress: progress)
+                // Smaller chunks than the runner's default: more frequent updates as answers stream in.
+                let result = try await runner.run(frames, tasks: ordered, settings: settings, chunk: 4096, progress: progress)
+                sink.finish()
+                await consumer.value
                 try Task.checkCancellation()
                 self.show(result)
                 self.phase = .idle
             } catch is CancellationError {
+                // What was answered stays on screen.
+                self.streaming = false
                 self.phase = .idle
             } catch {
+                self.streaming = false
                 self.phase = .failed(error.localizedDescription)
             }
         }
@@ -295,13 +310,49 @@ final class Session {
     }
 
     func show(_ result: ArrowResult) {
-        var colors: [ArrowTask: [SIMD3<Float>]] = [:]
-        for group in result.groups { colors[group.task] = result.colors(group) }
-        self.colors = colors
+        // A streamed run already read its colours from the same queries.
+        if !(streaming && self.result?.queries.count == result.queries.count) {
+            var colors: [ArrowTask: [SIMD3<Float>]] = [:]
+            for group in result.groups { colors[group.task] = result.colors(group) }
+            self.colors = colors
+        }
+        if !streaming || !framed { sceneID &+= 1 }
+        streaming = false
         self.result = result
         recommendedKeep = result.recommendedKeep
         display.keep = recommendedKeep
         showSeeds = false
+    }
+
+    /// A run's queries before any answer: the scene fills in as chunks arrive.
+    private func start(_ skeleton: ArrowResult) {
+        var colors: [ArrowTask: [SIMD3<Float>]] = [:]
+        for group in skeleton.groups { colors[group.task] = skeleton.colors(group) }
+        self.colors = colors
+        streaming = true
+        framed = false
+        showSeeds = false
+        result = skeleton
+    }
+
+    /// One chunk of answers. While tracks are being answered the playhead follows the
+    /// last timestep they reach, so they are seen moving as they arrive; the view frames
+    /// the scene once, on the first chunk with something to show.
+    private func fill(_ answers: Predictions, from start: Int) {
+        guard streaming, var result else { return }
+        result.predictions.fill(answers, from: start)
+        self.result = result
+        if let group = result.group(.track), group.perFrame > 0 {
+            let end = start + answers.count
+            if end > group.start, start < group.start + group.count {
+                let reached = (min(end, group.start + group.count) - group.start) / group.perFrame / result.frames.views
+                if reached > 0 { frame = min(reached - 1, frameTotal - 1) }
+            }
+        }
+        if !framed, !geometry.points.isEmpty {
+            framed = true
+            sceneID &+= 1
+        }
     }
 
     private func readTracks() {
@@ -315,12 +366,14 @@ final class Session {
         statistics = TrackStatistics(tracks)
     }
 
-    private func show(_ event: ArrowEvent) {
+    func show(_ event: ArrowEvent) {
         switch event {
         case let .downloading(f): phase = .downloading(f)
         case .loading: phase = .loading
         case .encoding: phase = .encoding
         case let .decoding(f): phase = .decoding(f)
+        case let .started(skeleton): start(skeleton)
+        case let .answered(start, answers): fill(answers, from: start)
         }
     }
 

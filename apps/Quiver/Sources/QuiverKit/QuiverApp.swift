@@ -30,9 +30,9 @@ public struct QuiverApp: App {
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Save Result…", action: Self.savePanel(session)).keyboardShortcut("s")
-                    .disabled(session.result == nil)
+                    .disabled(session.result == nil || session.streaming)
                 Button("Export USD…", action: Self.exportPanel(session)).keyboardShortcut("e")
-                    .disabled(session.result == nil)
+                    .disabled(session.result == nil || session.streaming)
             }
             CommandMenu("Playback") {
                 Button(session.isPlaying ? "Pause" : "Play", action: session.togglePlay)
@@ -117,7 +117,7 @@ struct ContentView: View {
                 .frame(minWidth: 280, idealWidth: 300, maxWidth: 380)
             VSplitView {
                 ZStack(alignment: .topLeading) {
-                    SceneViewport(geometry: session.geometry, pointSize: session.display.pointSize, sceneID: sceneID)
+                    SceneViewport(geometry: session.geometry, pointSize: session.display.pointSize, sceneID: session.sceneID)
                     if session.result == nil {
                         Text(session.frames == nil ? "Open a video, then Run." : "Run to see the scene in 3D.")
                             .font(.callout).foregroundStyle(.secondary)
@@ -151,12 +151,6 @@ struct ContentView: View {
             session.open(url)
             return true
         }
-    }
-
-    /// Changes once per result, so the viewport recenters on a new scene only.
-    private var sceneID: Int {
-        guard let result = session.result else { return 0 }
-        return result.queries.count &+ Int(result.encodeSeconds * 1000)
     }
 }
 

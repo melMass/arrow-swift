@@ -116,6 +116,8 @@ struct FramePreview: View {
         let first = max(0, frame - session.display.trail)
         for seed in 0 ..< tracks.seeds where kept[seed] {
             let i = tracks.index(frame, seed)
+            // Not answered yet, while a run streams in.
+            guard tracks.uv[i].x.isFinite else { continue }
             // Seen in this camera's frame, whatever the others see.
             let isSeen = tracks.cameraVisibility[i] >= seen
             if !isSeen && session.display.hidden == .hide { continue }
