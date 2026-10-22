@@ -67,6 +67,28 @@ struct StreamingTests {
         #expect(session.frames != nil && session.picks.count == 1)
     }
 
+    @Test("All-pixel tracking regrows the run, and answers land at the positions they are sent for")
+    func placesGrownTracks() throws {
+        let session = Session.fixture(frame: 0, result: false)
+        let full = PreviewFixtures.result()
+        let tracks = try #require(full.group(.track))
+        var skeleton = full
+        skeleton.predictions = .unanswered(full.queries.count)
+        skeleton.groups = full.groups.filter { $0.task != .track }
+        session.show(.started(skeleton))
+        #expect(session.colors[.track] == nil)
+        skeleton.groups = full.groups
+        session.show(.grew(skeleton))
+        #expect(session.streaming && session.colors[.track]?.count == tracks.count)
+
+        // The track group's answers, last timestep first.
+        let positions = Array((tracks.start ..< tracks.start + tracks.count).reversed())
+        session.show(.placed(positions, full.predictions.select(positions)))
+        let range = tracks.start ..< tracks.start + tracks.count
+        #expect(session.result?.predictions.points[range] == full.predictions.points[range])
+        #expect(session.frame == session.frameTotal - 1)
+    }
+
     @Test("While tracks arrive, the playhead follows the last timestep they reach")
     func followsTracks() throws {
         let session = Session.fixture(frame: 0, result: false)

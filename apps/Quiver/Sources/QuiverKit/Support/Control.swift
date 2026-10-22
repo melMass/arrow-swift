@@ -35,7 +35,12 @@ enum Control {
             },
             Tool("run", "Run the model as the Run button does and wait for the result.", [
                 .string("tasks", "Comma-separated: track, reconstruct, pose, depth (default: the sidebar's)", required: false),
+                .integer("all_pixels", "Track every Nth pixel of the clip once instead of the seeds; 0 tracks the seeds (default: the sidebar's)", required: false),
             ]) { arguments in
+                if let stride = arguments["all_pixels"] as? Int {
+                    session.settings.trackAllPixels = stride > 0
+                    if stride > 0 { session.settings.allPixelsStride = stride }
+                }
                 if let names = arguments["tasks"] as? String {
                     session.tasks = Set(names.split(separator: ",").compactMap {
                         ArrowTask(rawValue: $0.trimmingCharacters(in: .whitespaces))

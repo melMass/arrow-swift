@@ -210,6 +210,20 @@ struct Sidebar: View {
     }
 
     @ViewBuilder private var seeds: some View {
+        Toggle(isOn: $session.settings.trackAllPixels) {
+            Text("All pixels")
+            Text("Every pixel of the clip tracked once: the current frame's whole grid, then what each other frame shows that no track covers yet. Slower: each frame is decoded in turn.")
+        }
+        .accessibilityIdentifier("allPixels")
+        if session.settings.trackAllPixels {
+            Stepper("Every \(session.settings.allPixelsStride) px", value: $session.settings.allPixelsStride, in: 1 ... 16)
+            Text(SeedSummary.text(session)).font(.caption).foregroundStyle(.secondary)
+        } else {
+            seedTools
+        }
+    }
+
+    @ViewBuilder private var seedTools: some View {
         Picker("Seeds", selection: $session.seedTool) {
             ForEach(Session.SeedTool.allCases) { Text($0.rawValue).tag($0) }
         }

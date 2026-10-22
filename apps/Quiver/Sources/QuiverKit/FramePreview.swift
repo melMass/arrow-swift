@@ -34,7 +34,9 @@ struct FramePreview: View {
         }
     }
 
-    private var editing: Bool { editable && session.tasks.contains(.track) && !session.phase.isBusy }
+    private var editing: Bool {
+        editable && session.tasks.contains(.track) && !session.settings.trackAllPixels && !session.phase.isBusy
+    }
     private var showsSeeds: Bool { session.result?.group(.track) == nil || session.showSeeds }
 
     private func seedGesture(size: CGSize) -> some Gesture {
@@ -70,6 +72,13 @@ struct FramePreview: View {
     private func drawSeeds(in context: inout GraphicsContext, size: CGSize) {
         guard let frames = session.frames, session.tasks.contains(.track) else { return }
         let onSeedFrame = session.trackSource == session.displayFrame
+        if session.settings.trackAllPixels {
+            // Only the start frame's grid is known before the run.
+            let label = onSeedFrame ? "Every \(session.settings.allPixelsStride) px, then what other frames add" : "Starts on \(session.frameName(session.trackSource))"
+            if onSeedFrame { context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.accentColor.opacity(0.2))) }
+            context.draw(Text(label).font(.caption).foregroundStyle(.white), at: CGPoint(x: 8, y: 8), anchor: .topLeading)
+            return
+        }
         let gridOnEveryCamera = frames.views > 1 && session.region == Session.fullFrame && session.settings.trackStride > 0
         guard onSeedFrame || (gridOnEveryCamera && session.trackSource / frames.views == session.frame) else {
             context.draw(Text("Seeds on \(session.frameName(session.trackSource))").font(.caption).foregroundStyle(.white),
@@ -181,6 +190,10 @@ enum SeedSummary {
     /// "N × M = K grid points · P picked points".
     @MainActor static func text(_ session: Session) -> String {
         guard let frames = session.frames else { return "" }
+        if session.settings.trackAllPixels {
+            let lattice = PixelCoverage(width: frames.width, height: frames.height, frames: 1, stride: session.settings.allPixelsStride).latticeCount
+            return "\(lattice.formatted()) seeds on \(session.frameName(session.trackSource)), then each other frame's uncovered pixels"
+        }
         let r = session.region, stride = session.settings.trackStride
         let columns = QueryGrid.spreadAxis(frames.width, low: r.x, high: r.z, stride: stride).count
         let rows = QueryGrid.spreadAxis(frames.height, low: r.y, high: r.w, stride: stride).count

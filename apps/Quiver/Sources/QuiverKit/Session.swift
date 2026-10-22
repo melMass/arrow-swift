@@ -84,6 +84,7 @@ final class Session {
     var settings: TaskSettings = {
         var s = TaskSettings()
         s.trackStride = 12
+        s.allPixelsStride = 4
         s.reconstructionStride = 4
         s.depthStride = 4
         s.poseGrid = 32
@@ -281,7 +282,7 @@ final class Session {
 
     var canRun: Bool {
         guard frames != nil, !tasks.isEmpty, !phase.isBusy else { return false }
-        return !tasks.contains(.track) || settings.trackStride > 0 || !picks.isEmpty
+        return !tasks.contains(.track) || settings.trackAllPixels || settings.trackStride > 0 || !picks.isEmpty
     }
 
     func run() {
@@ -375,18 +376,35 @@ final class Session {
         result = skeleton
     }
 
+    /// All-pixel tracking seeded another frame: the same run, laid out anew.
+    private func grow(_ result: ArrowResult) {
+        guard streaming, let group = result.group(.track) else { return }
+        colors[.track] = result.colors(group)
+        self.result = result
+    }
+
     /// One chunk of answers. While the cloud or tracks are being answered the playhead
     /// follows the last timestep they reach, so they are seen as they arrive; the view frames
     /// the scene once, on the first chunk with something to show.
     private func fill(_ answers: Predictions, from start: Int) {
-        guard streaming, var result else { return }
-        result.predictions.fill(answers, from: start)
-        self.result = result
+        guard streaming, result != nil else { return }
+        result?.predictions.fill(answers, from: start)
+        follow(start ..< start + answers.count)
+    }
+
+    private func place(_ answers: Predictions, at positions: [Int]) {
+        guard streaming, result != nil, let first = positions.min(), let last = positions.max() else { return }
+        result?.predictions.scatter(answers, at: positions)
+        follow(first ..< last + 1)
+    }
+
+    private func follow(_ answered: Range<Int>) {
+        guard let result else { return }
+        let start = answered.lowerBound, end = answered.upperBound
         // Tracks and the cloud are both answered frame by frame: the playhead follows the
         // last timestep the arriving chunk completes.
         for task in [ArrowTask.reconstruct, .track] {
             guard let group = result.group(task), group.perFrame > 0 else { continue }
-            let end = start + answers.count
             if end > group.start, start < group.start + group.count {
                 let reached = (min(end, group.start + group.count) - group.start) / group.perFrame / result.frames.views
                 if reached > 0 { frame = min(reached - 1, frameTotal - 1) }
@@ -417,6 +435,8 @@ final class Session {
         case let .decoding(f): phase = .decoding(f)
         case let .started(skeleton): start(skeleton)
         case let .answered(start, answers): fill(answers, from: start)
+        case let .grew(result): grow(result)
+        case let .placed(positions, answers): place(answers, at: positions)
         }
     }
 
