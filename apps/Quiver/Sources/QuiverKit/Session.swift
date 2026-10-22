@@ -309,6 +309,15 @@ final class Session {
         job?.cancel()
     }
 
+    /// Empties the scene, stopping a run first; the frames and seeds stay for the next run.
+    func clear() {
+        if phase.isBusy { job?.cancel() }
+        streaming = false
+        result = nil
+        colors = [:]
+        recommendedKeep = 1
+    }
+
     func show(_ result: ArrowResult) {
         // A streamed run already read its colours from the same queries.
         if !(streaming && self.result?.queries.count == result.queries.count) {

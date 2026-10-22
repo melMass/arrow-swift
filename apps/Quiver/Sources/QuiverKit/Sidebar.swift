@@ -142,6 +142,9 @@ struct Sidebar: View {
                 Button("Export USD…", systemImage: "cube", action: QuiverApp.exportPanel(session))
                     .disabled(session.result == nil || session.streaming)
                     .help("Points, tracks over time, trajectories and cameras as a .usda stage, filtered as shown")
+                Button("Clear Scene", systemImage: "xmark.circle", role: .destructive, action: session.clear)
+                    .disabled(session.result == nil)
+                    .help("Empty the 3D view, stopping a run in progress; the frames and seeds stay")
             }
         }
         .formStyle(.grouped)

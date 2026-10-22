@@ -52,6 +52,19 @@ struct StreamingTests {
         #expect(session.result?.predictions.points == result.predictions.points)
     }
 
+    @Test("Clear empties a stopped run's scene and keeps the frames and seeds")
+    func clearsStoppedRun() throws {
+        let session = Session.fixture(frame: 0, result: false)
+        session.editSeeds { $0.picks.append(SIMD2(0.4, 0.4)) }
+        let full = PreviewFixtures.result()
+        replay(into: session, chunk: 500, until: full.queries.count / 2)
+        #expect(!session.geometry.points.isEmpty)
+        session.clear()
+        #expect(session.result == nil && !session.streaming)
+        #expect(session.geometry.isEmpty)
+        #expect(session.frames != nil && session.picks.count == 1)
+    }
+
     @Test("While tracks arrive, the playhead follows the last timestep they reach")
     func followsTracks() throws {
         let session = Session.fixture(frame: 0, result: false)
