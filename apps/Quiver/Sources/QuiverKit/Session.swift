@@ -1,4 +1,5 @@
 import ArrowKit
+import CoreGraphics
 import Foundation
 import Observation
 
@@ -12,6 +13,8 @@ final class Session {
         case downloading(Double)
         case loading
         case encoding
+        case downloadingSky(Double)
+        case findingSky
         case decoding(Double)
         case failed(String)
 
@@ -29,6 +32,8 @@ final class Session {
             case let .downloading(f): "Downloading ARROW (\(ArrowStore.downloadSize))… \(Int(f * 100))%"
             case .loading: "Loading the model…"
             case .encoding: "Encoding frames…"
+            case let .downloadingSky(f): "Downloading the sky model (\(SkySegmenter.downloadSize))… \(Int(f * 100))%"
+            case .findingSky: "Finding the sky…"
             case let .decoding(f): "Answering queries… \(Int(f * 100))%"
             case let .failed(message): message
             }
@@ -122,7 +127,14 @@ final class Session {
     /// The current run's scene has been framed.
     private var framed = false
 
+    /// Skip queries whose source pixel is sky (upstream's default), with the sky
+    /// segmenter on the Neural Engine. Off by default here: on a frame with no sky, the
+    /// per-frame stretch still marks a few pixels (0.1–0.2 % on indoor clips).
+    var skipSky = false
     private var runner: ArrowRunner?
+    private var segmenter: SkySegmenter?
+    /// The last mask and the frames it was found in.
+    private var skyCache: (frames: [CGImage], mask: SkyMask)?
     private var job: Task<Void, Never>?
     private var player: Task<Void, Never>?
 
@@ -288,7 +300,8 @@ final class Session {
                 if runner == nil { runner = try await ArrowRunner.load(progress: progress) }
                 guard let runner else { return }
                 // Smaller chunks than the runner's default: more frequent updates as answers stream in.
-                let result = try await runner.run(frames, tasks: ordered, settings: settings, chunk: 4096, progress: progress)
+                let sky = skipSky ? try await skyMask(frames) : nil
+                let result = try await runner.run(frames, tasks: ordered, settings: settings, chunk: 4096, sky: sky, progress: progress)
                 sink.finish()
                 await consumer.value
                 try Task.checkCancellation()
@@ -307,6 +320,24 @@ final class Session {
 
     func cancel() {
         job?.cancel()
+    }
+
+    /// The sky in `frames`, downloading and compiling the segmenter on first use; reused
+    /// while the frames stay the same.
+    private func skyMask(_ frames: FrameSet) async throws -> SkyMask {
+        if let skyCache, skyCache.frames.count == frames.images.count,
+           zip(skyCache.frames, frames.images).allSatisfy({ $0 === $1 }) {
+            return skyCache.mask
+        }
+        if segmenter == nil {
+            phase = .downloadingSky(0)
+            segmenter = try await SkySegmenter.load { self.phase = .downloadingSky($0.fractionCompleted) }
+        }
+        guard let segmenter else { throw CancellationError() }
+        phase = .findingSky
+        let mask = try await Task.detached { try segmenter.mask(frames) }.value
+        skyCache = (frames.images, mask)
+        return mask
     }
 
     /// Empties the scene, stopping a run first; the frames and seeds stay for the next run.

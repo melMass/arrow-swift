@@ -49,6 +49,10 @@ struct Sidebar: View {
                 }
                 task(.pose, "Camera poses", detail: "A rigid fit per frame, and its intrinsics")
                 task(.depth, "Video depth", detail: "Each frame in its own camera")
+                Toggle(isOn: $session.skipSky) {
+                    Text("Skip sky")
+                    Text("Sky pixels are not asked about, as upstream does; the segmenter (\(SkySegmenter.downloadSize)) runs on the Neural Engine")
+                }
                 if session.tasks.contains(.depth) {
                     Stepper("Pixel spacing \(session.settings.depthStride) px", value: $session.settings.depthStride, in: 1 ... 16)
                 }
@@ -70,6 +74,10 @@ struct Sidebar: View {
                     Text(String(format: "%@ queries · encoded in %.1f s · answered in %.1f s",
                                 result.queries.count.formatted(), result.encodeSeconds, result.decodeSeconds))
                         .font(.caption).foregroundStyle(.secondary)
+                    if let sky = result.sky {
+                        Text(String(format: "Sky: %.1f %% of pixels, their queries skipped", sky.fraction * 100))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
 
