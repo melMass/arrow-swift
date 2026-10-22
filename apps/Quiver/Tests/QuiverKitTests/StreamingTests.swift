@@ -34,6 +34,8 @@ struct StreamingTests {
     @Test("The scene fills in chunk by chunk, framed once, and the finished result keeps that framing")
     func fillsIn() throws {
         let session = Session.fixture(frame: 0, result: false)
+        // Every frame's points, so the count shows the cloud filling in.
+        session.display.accumulateCloud = true
         let before = session.sceneID
         let full = PreviewFixtures.result()
         let cloud = try #require(full.group(.reconstruct))
