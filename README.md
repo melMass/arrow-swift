@@ -2,6 +2,10 @@
 
 [ARROW](https://github.com/ifradlin/arrow) ([paper](https://arxiv.org/abs/2610.01314)) running natively on Apple silicon with [MLX](https://github.com/ml-explore/mlx-swift): 3D reconstruction, 3D point tracking, camera poses and depth from a video, a photo set, or several synchronized videos of one scene. The repository also holds **Quiver**, a Mac app for running the model and looking at what it predicts.
 
+<p align="center">
+  <img width="480" alt="quiver" src="https://github.com/user-attachments/assets/f211a940-3745-409b-8717-636abbbb2fa5" />
+</p>
+
 - **`packages/ArrowKit`** is the model as a Swift package. Its outputs match the PyTorch reference: the encoder and every head reach a cosine similarity of 0.9999 or better against outputs captured from upstream on CPU in fp32. It runs in fp16 by default.
 - **`apps/Quiver`** is the app. You open a clip, pick frames and seeds, and run. The result appears in a 3D view with the input frame and its tracks below. It can save results to reopen without the model, and export them to USD.
 
