@@ -85,10 +85,12 @@ public final class ArrowModel: @unchecked Sendable {
                        memories: memories, reference: reference)
     }
 
-    /// Answers `queries` in chunks of `chunk`, reporting the fraction done after each.
+    /// Answers `queries` in chunks of `chunk`, handing each chunk's answers and the
+    /// position of its first query to `answered`, then the fraction done to `progress`.
     /// Cancellation is checked between chunks.
     public func decode(
         _ queries: Queries, encoded: Encoded, chunk: Int = 16_384,
+        answered: (Int, Predictions) -> Void = { _, _ in },
         progress: (Double) -> Void = { _ in }
     ) throws -> Predictions {
         let padded = QueryEmbedding.padImages(encoded.images)
@@ -100,7 +102,9 @@ public final class ArrowModel: @unchecked Sendable {
             let end = min(start + chunk, queries.count)
             let raw = network.decode(queries.slice(start ..< end), encoded: encoded, padded: padded, dtype: precision.dtype)
             eval(Array(raw.values))
-            result.append(Self.predictions(raw))
+            let answers = Self.predictions(raw)
+            result.append(answers)
+            answered(start, answers)
             start = end
             progress(Double(end) / Double(queries.count))
         }

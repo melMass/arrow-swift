@@ -56,9 +56,33 @@ public struct Predictions: Sendable {
 
     public var count: Int { points.count }
 
+    /// `count` queries not answered yet: NaN everywhere, which every reader skips.
+    public static func unanswered(_ count: Int) -> Predictions {
+        var p = Predictions()
+        let none3 = SIMD3<Float>(repeating: .nan)
+        p.points = Array(repeating: none3, count: count)
+        p.confidence = Array(repeating: .nan, count: count)
+        p.uv = Array(repeating: SIMD2(repeating: .nan), count: count)
+        p.visibility = Array(repeating: .nan, count: count)
+        p.normals = Array(repeating: none3, count: count)
+        p.displacement = Array(repeating: none3, count: count)
+        return p
+    }
+
     mutating func append(_ other: Predictions) {
         points += other.points; confidence += other.confidence; uv += other.uv
         visibility += other.visibility; normals += other.normals; displacement += other.displacement
+    }
+
+    /// Writes `other`'s answers over the queries from `start` on.
+    public mutating func fill(_ other: Predictions, from start: Int) {
+        let range = start ..< start + other.count
+        points.replaceSubrange(range, with: other.points)
+        confidence.replaceSubrange(range, with: other.confidence)
+        uv.replaceSubrange(range, with: other.uv)
+        visibility.replaceSubrange(range, with: other.visibility)
+        normals.replaceSubrange(range, with: other.normals)
+        displacement.replaceSubrange(range, with: other.displacement)
     }
 }
 

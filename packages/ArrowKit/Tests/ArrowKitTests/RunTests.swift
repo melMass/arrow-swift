@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Synchronization
 import Testing
 @testable import ArrowKit
 
@@ -23,8 +24,15 @@ struct RunTests {
         settings.trackStride = 16
         settings.reconstructionStride = 8
         settings.poseGrid = 32
-        let result = try await runner.run(frames, tasks: [.track, .reconstruct, .pose], settings: settings)
+        // The streamed chunks, assembled as a viewer would, end up as the finished predictions.
+        let streamed = Streamed()
+        let result = try await runner.run(frames, tasks: [.track, .reconstruct, .pose], settings: settings) { streamed.take($0) }
         print("queries", result.queries.count, "encode", result.encodeSeconds, "decode", result.decodeSeconds)
+        let assembled = try #require(streamed.result)
+        print("streamed chunks", streamed.chunks)
+        #expect(streamed.chunks > 1)
+        #expect(assembled.predictions.points == result.predictions.points)
+        #expect(assembled.predictions.visibility == result.predictions.visibility)
         for group in result.groups { print(group.task, group.count, "per frame", group.perFrame) }
 
         let cameras = try #require(result.cameras)
@@ -126,6 +134,26 @@ struct RunTests {
         try USDExport.write(result, to: usd)
         let stage = try String(contentsOf: usd, encoding: .utf8)
         #expect(stage.contains("def Camera \"Camera_1\"") && stage.contains("endTimeCode = 3"))
+    }
+}
+
+/// A run's `started` result with each `answered` chunk written into it.
+final class Streamed: Sendable {
+    private let state = Mutex<(result: ArrowResult?, chunks: Int)>((nil, 0))
+
+    var result: ArrowResult? { state.withLock { $0.result } }
+    var chunks: Int { state.withLock { $0.chunks } }
+
+    func take(_ event: ArrowEvent) {
+        state.withLock { state in
+            switch event {
+            case let .started(skeleton): state.result = skeleton
+            case let .answered(start, answers):
+                state.result?.predictions.fill(answers, from: start)
+                state.chunks += 1
+            default: break
+            }
+        }
     }
 }
 

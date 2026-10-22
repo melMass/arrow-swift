@@ -48,6 +48,12 @@ public enum ArrowEvent: Sendable {
     case encoding
     /// Fraction of the queries answered.
     case decoding(Double)
+    /// The run's frames, queries and groups, with every prediction still unanswered
+    /// (`Predictions.unanswered`): what `answered` chunks fill in.
+    case started(ArrowResult)
+    /// A chunk's answers, for the queries from `start` on. Cameras come only with the
+    /// finished result.
+    case answered(start: Int, Predictions)
 }
 
 /// The model, loaded once, and the last encoding, kept for further questions about the
@@ -96,8 +102,14 @@ public actor ArrowRunner {
 
         let (queries, groups) = settings.queries(tasks, frames: frames.images.count, views: frames.views, width: frames.width, height: frames.height)
         let decodeStart = Date()
+        progress(.started(ArrowResult(
+            frames: frames, queries: queries, predictions: .unanswered(queries.count), groups: groups,
+            encodeSeconds: encodeSeconds)))
         progress(.decoding(0))
-        let predictions = try model.decode(queries, encoded: encoding, chunk: chunk) { progress(.decoding($0)) }
+        let predictions = try model.decode(
+            queries, encoded: encoding, chunk: chunk,
+            answered: { progress(.answered(start: $0, $1)) },
+            progress: { progress(.decoding($0)) })
         var result = ArrowResult(
             frames: frames, queries: queries, predictions: predictions, groups: groups, cameras: nil,
             encodeSeconds: encodeSeconds, decodeSeconds: Date().timeIntervalSince(decodeStart))

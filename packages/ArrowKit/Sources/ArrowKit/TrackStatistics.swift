@@ -3,7 +3,7 @@ import simd
 
 /// Per-track figures over every timestep of a `TrackSet`.
 public struct TrackStatistics: Sendable {
-    /// Mean confidence over every timestep.
+    /// Mean confidence over every answered timestep.
     public var meanConfidence: [Float]
     /// The farthest a track's point strays from its own mean position.
     public var radius: [Float]
@@ -20,8 +20,9 @@ public struct TrackStatistics: Sendable {
         meanConfidence.reserveCapacity(seeds)
         for s in 0 ..< seeds {
             let samples = (0 ..< steps).map { tracks.points[tracks.index($0, s)] }.filter(TrackSet.finite)
-            let confidence = (0 ..< steps).map { tracks.confidence[tracks.index($0, s)] }
-            meanConfidence.append(confidence.reduce(0, +) / Float(max(steps, 1)))
+            // Over the timesteps answered so far: NaN while none are.
+            let confidence = (0 ..< steps).map { tracks.confidence[tracks.index($0, s)] }.filter(\.isFinite)
+            meanConfidence.append(confidence.isEmpty ? .nan : confidence.reduce(0, +) / Float(confidence.count))
             guard !samples.isEmpty else {
                 radius.append(.infinity); median.append(SIMD3(repeating: .nan)); continue
             }
