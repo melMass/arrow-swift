@@ -138,6 +138,12 @@ public struct TaskSettings: Sendable {
     public var trackRegion = SIMD4<Float>(0, 0, 1, 1)
     /// Clicked seeds in model pixels, tracked besides the grid.
     public var trackPicks: [SIMD2<Float>] = []
+    /// Track every `allPixelsStride`-th pixel of the clip once instead of the seeds
+    /// (upstream's `all_pixels` task, `PixelCoverage`), starting from `trackSource`. Each
+    /// frame's seeds depend on where the earlier ones went, so `ArrowRunner` decodes them
+    /// frame by frame and `queries` leaves the track task out.
+    public var trackAllPixels = false
+    public var allPixelsStride = 2
     public var poseGrid = 64
     /// The camera tracks and reconstruction are expressed in.
     public var reference = 0
@@ -174,7 +180,7 @@ public struct TaskSettings: Sendable {
     public func queries(_ tasks: [ArrowTask], frames: Int, views: Int = 1, width: Int, height: Int) -> (Queries, [QueryGroup]) {
         var all = Queries(xy: [], source: [], target: [], reference: [])
         var groups: [QueryGroup] = []
-        for task in tasks {
+        for task in tasks where !(task == .track && trackAllPixels) {
             let block: Queries
             let perFrame: Int
             var reference: Int? = reference

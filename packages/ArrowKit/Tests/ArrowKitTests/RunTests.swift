@@ -135,9 +135,42 @@ struct RunTests {
         let stage = try String(contentsOf: usd, encoding: .utf8)
         #expect(stage.contains("def Camera \"Camera_1\"") && stage.contains("endTimeCode = 3"))
     }
+
+    @Test("All-pixel tracking: the source frame's whole lattice, then what later frames add")
+    func allPixels() async throws {
+        let clip = URL(filePath: ProcessInfo.processInfo.environment["ARROW_CLIP"]!)
+        let frames = try await FrameSet.load(.video(clip), count: 4, maxSide: 252)
+        let runner = ArrowRunner(model: try ArrowModel.load(from: Weights.directory!))
+        var settings = TaskSettings()
+        settings.trackAllPixels = true
+        settings.allPixelsStride = 6
+        settings.trackSource = 1
+        settings.reconstructionStride = 14
+        let streamed = Streamed()
+        let result = try await runner.run(frames, tasks: [.track, .reconstruct], settings: settings, chunk: 2048) { streamed.take($0) }
+        print("all pixels: decode", result.decodeSeconds)
+        let group = try #require(result.group(.track))
+        let reconstruct = try #require(result.group(.reconstruct))
+        #expect(group.start == reconstruct.count && group.count == group.perFrame * 4)
+
+        // Seeded in order: frame 1's whole lattice, then 2, 3 and 0 add what is still uncovered.
+        let sources = result.queries.source[group.start ..< group.start + group.perFrame].map(Int.init)
+        let rank = PixelCoverage.order(frames: 4, source: 1)
+        #expect(zip(sources, sources.dropFirst()).allSatisfy { rank.firstIndex(of: $0)! <= rank.firstIndex(of: $1)! })
+        let lattice = PixelCoverage(width: frames.width, height: frames.height, frames: 1, stride: 6).latticeCount
+        let perFrame = (0 ..< 4).map { f in sources.filter { $0 == f }.count }
+        print("seeds per frame", perFrame, "lattice", lattice)
+        #expect(perFrame[1] == lattice)
+        #expect(perFrame[0] < lattice / 2 && perFrame[2] < lattice / 2)
+
+        let assembled = try #require(streamed.result)
+        #expect(assembled.queries.xy == result.queries.xy)
+        #expect(assembled.predictions.points == result.predictions.points)
+        #expect(assembled.predictions.visibility == result.predictions.visibility)
+    }
 }
 
-/// A run's `started` result with each `answered` chunk written into it.
+/// A run's `started` (or latest `grew`) result with each chunk of answers written into it.
 final class Streamed: Sendable {
     private let state = Mutex<(result: ArrowResult?, chunks: Int)>((nil, 0))
 
@@ -148,8 +181,12 @@ final class Streamed: Sendable {
         state.withLock { state in
             switch event {
             case let .started(skeleton): state.result = skeleton
+            case let .grew(result): state.result = result
             case let .answered(start, answers):
                 state.result?.predictions.fill(answers, from: start)
+                state.chunks += 1
+            case let .placed(positions, answers):
+                state.result?.predictions.scatter(answers, at: positions)
                 state.chunks += 1
             default: break
             }

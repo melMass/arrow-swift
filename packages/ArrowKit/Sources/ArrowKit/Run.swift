@@ -57,6 +57,11 @@ public enum ArrowEvent: Sendable {
     /// A chunk's answers, for the queries from `start` on. Cameras come only with the
     /// finished result.
     case answered(start: Int, Predictions)
+    /// All-pixel tracking seeded another frame: the run so far, laid out anew with that
+    /// frame's tracks unanswered. Positions in later chunks refer to this layout.
+    case grew(ArrowResult)
+    /// A chunk's answers for the queries at these positions.
+    case placed([Int], Predictions)
 }
 
 /// The model, loaded once, and the last encoding, kept for further questions about the
@@ -106,6 +111,7 @@ public actor ArrowRunner {
         let encodeSeconds = Date().timeIntervalSince(started)
 
         let (queries, groups) = settings.queries(tasks, frames: frames.images.count, views: frames.views, width: frames.width, height: frames.height)
+        let allPixels = settings.trackAllPixels && tasks.contains(.track)
         let decodeStart = Date()
         var skeleton = ArrowResult(
             frames: frames, queries: queries, predictions: .unanswered(queries.count), groups: groups,
@@ -113,25 +119,80 @@ public actor ArrowRunner {
         skeleton.sky = sky
         progress(.started(skeleton))
         progress(.decoding(0))
+        // All-pixel tracking's size is known only as it goes; its first frame's block stands in.
+        let estimate = allPixels
+            ? PixelCoverage(width: frames.width, height: frames.height, frames: 1, stride: settings.allPixelsStride).latticeCount
+                * frames.images.count
+            : 0
+        let share = Double(queries.count) / Double(max(queries.count + estimate, 1))
         let predictions = try model.decode(
             queries, encoded: encoding, chunk: chunk, skipped: sky?.skipped(queries),
             answered: { progress(.answered(start: $0, $1)) },
-            progress: { progress(.decoding($0)) })
+            progress: { progress(.decoding($0 * share)) })
         var result = ArrowResult(
             frames: frames, queries: queries, predictions: predictions, groups: groups, cameras: nil,
-            encodeSeconds: encodeSeconds, decodeSeconds: Date().timeIntervalSince(decodeStart))
+            encodeSeconds: encodeSeconds)
         result.sky = sky
+        if allPixels {
+            try trackAllPixels(
+                &result, encoding: encoding, settings: settings, chunk: chunk, sky: sky,
+                progress: { progress($0) }, fraction: { share + $0 * (1 - share) })
+        }
+        result.decodeSeconds = Date().timeIntervalSince(decodeStart)
         if let pose = result.group(.pose), let reference = pose.reference {
             let range = pose.start ..< pose.start + pose.count
-            var block = Predictions()
-            block.points = Array(predictions.points[range]); block.confidence = Array(predictions.confidence[range])
-            block.uv = Array(predictions.uv[range]); block.visibility = Array(predictions.visibility[range])
-            block.normals = Array(predictions.normals[range]); block.displacement = Array(predictions.displacement[range])
             let fitted = PoseFit.cameras(
-                block, xy: Array(queries.xy[range]), frames: frames.images.count, perFrame: pose.perFrame, reference: reference)
+                predictions.select(Array(range)), xy: Array(queries.xy[range]), frames: frames.images.count,
+                perFrame: pose.perFrame, reference: reference)
             result.cameras = PoseFit.rebased(fitted, onto: settings.reference)
         }
         Memory.clearCache()
         return result
+    }
+
+    /// Upstream's `track_all_pixels` after the other tasks: each frame in
+    /// `PixelCoverage.order` seeds what is still uncovered, its tracks are decoded through
+    /// every frame, and where they are seen covers those pixels for the frames after it.
+    /// The tracks are appended to `result` as one target-major track group. Sky never seeds
+    /// (`PixelCoverage`), so no query is skipped.
+    private func trackAllPixels(
+        _ result: inout ArrowResult, encoding: Encoded, settings: TaskSettings, chunk: Int, sky: SkyMask?,
+        progress: (ArrowEvent) -> Void, fraction: (Double) -> Double
+    ) throws {
+        let frames = result.frames, count = frames.images.count
+        let fixed = (queries: result.queries, predictions: result.predictions, groups: result.groups)
+        var coverage = PixelCoverage(
+            width: frames.width, height: frames.height, frames: count, stride: settings.allPixelsStride, sky: sky)
+        var blocks = TrackBlocks(frames: count)
+
+        func layout() -> ArrowResult {
+            var current = result
+            let (queries, predictions) = blocks.merged()
+            current.queries = fixed.queries + queries
+            current.predictions = fixed.predictions
+            current.predictions.append(predictions)
+            current.groups = fixed.groups + [QueryGroup(
+                task: .track, start: fixed.queries.count, count: queries.count, perFrame: blocks.total,
+                reference: settings.reference)]
+            return current
+        }
+
+        let order = PixelCoverage.order(frames: count, source: min(max(settings.trackSource, 0), count - 1))
+        for (step, frame) in order.enumerated() {
+            let seeds = coverage.seed(frame)
+            guard !seeds.isEmpty else { continue }
+            let block = QueryBuilder.track(seeds, source: frame, targets: Array(0 ..< count), reference: settings.reference)
+            blocks.append(block, seeds: seeds.count)
+            let b = blocks.seeds.count - 1
+            progress(.grew(layout()))
+            let positions = blocks.positions(b).map { $0 + fixed.queries.count }
+            let answers = try model.decode(
+                block, encoded: encoding, chunk: chunk,
+                answered: { progress(.placed(Array(positions[$0 ..< $0 + $1.count]), $1)) },
+                progress: { progress(.decoding(fraction((Double(step) + $0) / Double(order.count)))) })
+            blocks.answer(b, answers)
+            coverage.mark(answers, seeds: seeds.count, source: frame)
+        }
+        if !blocks.seeds.isEmpty { result = layout() }
     }
 }

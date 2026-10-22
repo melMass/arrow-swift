@@ -79,8 +79,16 @@ public struct Predictions: Sendable {
         visibility += other.visibility; normals += other.normals; displacement += other.displacement
     }
 
+    func select(_ indices: [Int]) -> Predictions {
+        var p = Predictions()
+        p.points = indices.map { points[$0] }; p.confidence = indices.map { confidence[$0] }
+        p.uv = indices.map { uv[$0] }; p.visibility = indices.map { visibility[$0] }
+        p.normals = indices.map { normals[$0] }; p.displacement = indices.map { displacement[$0] }
+        return p
+    }
+
     /// Writes `other`'s answers, in order, over the queries at `indices`.
-    mutating func scatter(_ other: Predictions, at indices: [Int]) {
+    public mutating func scatter(_ other: Predictions, at indices: [Int]) {
         for (k, i) in indices.enumerated() {
             points[i] = other.points[k]; confidence[i] = other.confidence[k]; uv[i] = other.uv[k]
             visibility[i] = other.visibility[k]; normals[i] = other.normals[k]; displacement[i] = other.displacement[k]
