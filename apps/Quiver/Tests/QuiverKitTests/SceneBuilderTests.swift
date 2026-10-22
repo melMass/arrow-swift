@@ -19,12 +19,27 @@ struct SceneBuilderTests {
         let colors = result.colors(group)
         var settings = DisplaySettings()
         settings.keep = 1
-        let all = SceneBuilder.cloud(result, colors: colors, settings: settings)
+        settings.accumulateCloud = true
+        let all = SceneBuilder.cloud(result, timestep: 0, colors: colors, settings: settings)
         #expect(all.points.count == group.count)
         // Reference camera z forward is SceneKit −z.
         #expect(all.points.allSatisfy { $0.z < 0 })
         settings.keep = 0.3
-        #expect(SceneBuilder.cloud(result, colors: colors, settings: settings).points.count < group.count)
+        #expect(SceneBuilder.cloud(result, timestep: 0, colors: colors, settings: settings).points.count < group.count)
+    }
+
+    @Test("Without accumulation the cloud is the current frame's points, which move with it")
+    func currentFrameCloud() throws {
+        let group = try #require(result.group(.reconstruct))
+        let colors = result.colors(group)
+        var settings = DisplaySettings()
+        settings.keep = 1
+        let first = SceneBuilder.cloud(result, timestep: 0, colors: colors, settings: settings)
+        let later = SceneBuilder.cloud(result, timestep: 5, colors: colors, settings: settings)
+        #expect(first.points.count == group.perFrame && later.points.count == group.perFrame)
+        #expect(first.points != later.points)
+        let expected = (group.start + 5 * group.perFrame ..< group.start + 6 * group.perFrame).map { Geometry.scene(result.predictions.points[$0]) }
+        #expect(later.points == expected)
     }
 
     @Test("Hidden track points can be shown, dimmed or dropped; trails reach back `trail` frames")

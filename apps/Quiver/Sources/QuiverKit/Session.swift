@@ -375,14 +375,17 @@ final class Session {
         result = skeleton
     }
 
-    /// One chunk of answers. While tracks are being answered the playhead follows the
-    /// last timestep they reach, so they are seen moving as they arrive; the view frames
+    /// One chunk of answers. While the cloud or tracks are being answered the playhead
+    /// follows the last timestep they reach, so they are seen as they arrive; the view frames
     /// the scene once, on the first chunk with something to show.
     private func fill(_ answers: Predictions, from start: Int) {
         guard streaming, var result else { return }
         result.predictions.fill(answers, from: start)
         self.result = result
-        if let group = result.group(.track), group.perFrame > 0 {
+        // Tracks and the cloud are both answered frame by frame: the playhead follows the
+        // last timestep the arriving chunk completes.
+        for task in [ArrowTask.reconstruct, .track] {
+            guard let group = result.group(task), group.perFrame > 0 else { continue }
             let end = start + answers.count
             if end > group.start, start < group.start + group.count {
                 let reached = (min(end, group.start + group.count) - group.start) / group.perFrame / result.frames.views
@@ -473,7 +476,7 @@ final class Session {
         guard let result else { return Geometry() }
         var geometry = Geometry()
         if display.showCloud, let colors = colors[.reconstruct] {
-            geometry.append(SceneBuilder.cloud(result, colors: colors, settings: display))
+            geometry.append(SceneBuilder.cloud(result, timestep: frame, colors: colors, settings: display))
         }
         if display.showDepth, let colors = colors[.depth] {
             geometry.append(SceneBuilder.depth(result, frame: displayFrame, colors: colors, settings: display))

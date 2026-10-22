@@ -83,6 +83,10 @@ struct Sidebar: View {
 
             Section("Display") {
                 Toggle("Point cloud", isOn: $session.display.showCloud)
+                if session.display.showCloud {
+                    Toggle("Accumulate all frames", isOn: $session.display.accumulateCloud)
+                        .help("Every frame's points at once, instead of only the current frame's: still things fill in, moving ones leave a copy at each frame")
+                }
                 Toggle("Tracks", isOn: $session.display.showTracks)
                 Toggle("Cameras", isOn: $session.display.showCameras)
                 Toggle("Depth of this frame", isOn: $session.display.showDepth)

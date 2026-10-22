@@ -24,6 +24,9 @@ struct DisplaySettings: Equatable {
     }
 
     var showCloud = true
+    /// Every frame's reconstruction at once; off shows only the current frame's, so
+    /// whatever moves is seen where it is now (upstream's "Accumulate all frames").
+    var accumulateCloud = false
     var showTracks = true
     var showCameras = true
     var showDepth = false
@@ -80,15 +83,20 @@ struct Geometry {
 enum SceneBuilder {
     static let missing = SIMD3<Float>(repeating: 110 / 255)
 
-    /// The reconstruction's point cloud: every frame's pixel grid in the reference camera,
-    /// the least confident dropped.
-    static func cloud(_ result: ArrowResult, colors: [SIMD3<Float>], settings: DisplaySettings) -> Geometry {
+    /// The reconstruction's point cloud in the reference camera: every frame's pixel grid,
+    /// or only `timestep`'s (every camera's frame at it) unless `settings.accumulateCloud`;
+    /// the least confident dropped, by one cut over all frames so it holds still in time.
+    static func cloud(_ result: ArrowResult, timestep: Int, colors: [SIMD3<Float>], settings: DisplaySettings) -> Geometry {
         guard let group = result.group(.reconstruct) else { return Geometry() }
-        let range = group.start ..< group.start + group.count
+        let all = group.start ..< group.start + group.count
+        let views = result.frames.views
+        let range = settings.accumulateCloud || timestep >= result.frames.timesteps
+            ? all : group.start + timestep * views * group.perFrame ..< group.start + (timestep + 1) * views * group.perFrame
         let tints = pointColors(result, group, rgb: colors, coloring: settings.cloudColoring, keep: settings.keep)
-        let cut = Confidence.threshold(range.map { result.predictions.confidence[$0] }, keep: settings.keep)
+        let cut = Confidence.threshold(all.map { result.predictions.confidence[$0] }, keep: settings.keep)
         var geometry = Geometry()
-        for (k, i) in range.enumerated() where result.predictions.confidence[i] >= cut {
+        for i in range where result.predictions.confidence[i] >= cut {
+            let k = i - group.start
             let p = result.predictions.points[i]
             guard p.x.isFinite, p.y.isFinite, p.z.isFinite else { continue }
             geometry.points.append(Geometry.scene(p))
