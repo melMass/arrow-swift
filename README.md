@@ -1,0 +1,130 @@
+# arrow-swift
+
+[ARROW](https://github.com/ifradlin/arrow) ([paper](https://arxiv.org/abs/2610.01314)) running natively on Apple silicon with [MLX](https://github.com/ml-explore/mlx-swift): 3D reconstruction, 3D point tracking, camera poses and depth from a video, a photo set, or several synchronized videos of one scene. The repository also holds **Quiver**, a Mac app for running the model and looking at what it predicts.
+
+- **`packages/ArrowKit`** is the model as a Swift package. Its outputs match the PyTorch reference: the encoder and every head reach a cosine similarity of 0.9999 or better against outputs captured from upstream on CPU in fp32. It runs in fp16 by default.
+- **`apps/Quiver`** is the app. You open a clip, pick frames and seeds, and run. The result appears in a 3D view with the input frame and its tracks below. It can save results to reopen without the model, and export them to USD.
+
+This is an independent port. The model, its weights and the method are the work of the ARROW authors (see [Credits](#credits)).
+
+## Requirements
+
+- A Mac with Apple silicon, macOS 15 or later, and Xcode 16 or later.
+- About 16 GB of memory for clips of up to a few dozen frames. See [Long clips](#long-clips) for more.
+- The weights, [`ifradlin/arrow`](https://huggingface.co/ifradlin/arrow) (5.3 GB). They download into the Hugging Face cache on first run, and an existing cache from the Python tools is reused.
+
+## Demo App (Quiver)
+<p align="center">
+  <img width="128" height="128" alt="image" src="https://github.com/user-attachments/assets/d5806226-d4d3-4e06-8afd-13359ebd15b1" />
+</p>
+
+<img width="2296" height="1394" alt="image" src="https://github.com/user-attachments/assets/5f0f04f5-a7b1-4aa3-b25a-24281be54d9b" />
+
+```sh
+scripts/build-app.sh --open
+```
+
+This builds `build/Quiver.app` and opens it. The build goes through `xcodebuild`, because SwiftPM alone does not compile MLX's Metal shaders. The app is ad-hoc signed; set `CODESIGN_IDENTITY` to sign it with your own certificate.
+
+**Input.** Open a video, a folder of images or a single image, or drop one on the window. There are two ways to pick frames:
+- **Spread** takes N frames evenly across the clip.
+- **Range** takes every k-th frame from one frame to another, so it can read every frame of a clip.
+
+Either way, a run takes at most 300 frames. **Add Camera…** adds another video of the same scene for multi-view input (see [Multi-view](#multi-view)).
+
+**Tasks.**
+- **3D tracking**: points from one frame, followed through every frame.
+- **3D reconstruction**: every frame's pixels in the first frame's camera.
+- **Camera poses**: a rigid fit and intrinsics per frame.
+- **Video depth**: each frame in its own camera.
+
+**Seeds.** Drag a region on the frame to bound the seed grid, or click points to track exactly those pixels. Seeds belong to the frame they were placed on, and tracks start from that frame. **Inspect…** zooms in to 1600% to check the exact query pixels.
+
+**Display.** These follow the upstream viewer:
+- a confidence filter, starting at upstream's "recommended" cut;
+- point colours by RGB, confidence, visibility, or predicted or estimated normals;
+- track colours by seed position, RGB, time or confidence;
+- trails, and hidden points shown, dimmed or dropped;
+- still and moving tracks split apart;
+- frusta along the camera path, with the current frame on its frustum;
+- a depth panel with depth, normals and visibility.
+
+**Output.**
+- **Save Result** (⌘S) writes a `.quiver` file: the frames, every query and prediction, and the cameras. It reopens without the model.
+- **Export USD** (⌘E) writes a `.usda` stage of what is shown: the cloud, per-frame depth, tracks animated over time, their paths as curves, and the cameras with their intrinsics. The stage passes `usdchecker`. Its axes are Y up, and the scale is the model's own, which is relative and not metres.
+
+## ArrowKit
+
+```swift
+import ArrowKit
+
+let frames = try await FrameSet.load(.video(url), selection: .spread(16), maxSide: 504)
+let runner = try await ArrowRunner.load()          // downloads the weights on first use
+var settings = TaskSettings()
+settings.trackStride = 12                          // a seed every 12 px
+let result = try await runner.run(frames, tasks: [.track, .reconstruct, .pose], settings: settings)
+
+let tracks = TrackSet(result, result.group(.track)!)
+let point = tracks.points[tracks.index(5, 0)]      // seed 0 at frame 5, in frame 0's camera
+try USDExport.write(result, to: URL(filePath: "scene.usda"))
+try ResultArchive.write(result, sources: [url], to: URL(filePath: "scene.quiver"))
+```
+
+- ARROW encodes a set of frames once, then answers *queries* against that encoding: the 3D point seen at a pixel of a source frame, located in a target frame and expressed in a reference camera.
+- `ArrowRunner` keeps the last encoding, so asking new questions about the same frames skips the encoder. The decoder's keys and values depend only on the frames, so they are computed once per encoding and shared by every chunk of queries.
+- Each task is a block of queries (`TaskSettings.queries`), and `ArrowResult.groups` says where each block sits.
+- Cameras come back in the frame that tracks and reconstruction are expressed in: frame 0, which is the identity.
+
+## Multi-view
+
+Several synchronized videos of one scene are one frame set. Frame `t · views + v` is camera v at timestep t, the same order upstream uses:
+
+```swift
+let frames = try await FrameSet.load(views: [.video(left), .video(right)],
+                                     selection: .range(start: 0, end: 48, step: 2, limit: 300))
+```
+
+- The streams must already be aligned frame for frame; nothing estimates a time offset. Cameras of different lengths are read over the shortest.
+- Without a drawn region, every camera's frame at the seed timestep gets the seed grid, as upstream seeds a rig. A drawn region and clicked points stay on the camera they were drawn on.
+- `TrackSet` folds the cameras' answers into one track per timestep, in one of two modes:
+  - **Camera median**: the per-axis median of the cameras that see the point.
+  - **Source camera**: the prediction from the camera the track was seeded in.
+- Quiver shows one camera's frame below the 3D view and one camera path per view. USD export writes one animated camera per view.
+
+## Long clips
+
+ARROW's encoder attends across every frame, and every query reads every frame's patches. Memory and time therefore grow with the number of frames, and a query costs more the more frames there are.
+
+On an M1 Pro (16 GB), 8 frames at 504 × 280 encode in about 8 s, and 95,000 queries take about 16 s. The decoder's keys and values alone take about 30 MB per frame at 504 px, or about 7 MB per frame at 252 px, on top of 2.6 GB of fp16 weights. A few hundred frames need a smaller long side, a coarse seed grid, or more memory than a 16 GB Mac has. The 300-frame limit is the app's, not the model's.
+
+## Tests
+
+```sh
+packages/ArrowKit/test.sh                        # queries, grids, poses, frame selection, multi-view folding
+ARROW_MODEL_TESTS=1 packages/ArrowKit/test.sh    # + parity against PyTorch (needs the weights)
+ARROW_MODEL_TESTS=1 ARROW_CLIP=/path/to/railway.mp4 packages/ArrowKit/test.sh   # + end to end, one and two cameras
+(cd apps/Quiver && swift test)                   # scene building, USD export, archives, seeds
+```
+
+- `test.sh` wraps `swift test` and puts MLX's shaders where MLX looks for them.
+- The parity fixtures in `packages/ArrowKit/Fixtures` were captured from upstream at commit `6fca6f8` with `capture.py`. Its docstring says how to rerun it.
+- `railway.mp4` is the sample clip in upstream's `assets/videos`.
+
+## Credits
+
+ARROW is by Ilya Fradlin, Christian Schmidt, Jens Piekenbrinck, Karim Knaebel, Gonzalo Martin Garcia and Bastian Leibe:
+
+```bibtex
+@article{fradlin2026arrow,
+    title   = {{ARROW}: Arbitrary Reconstruction and Tracking of 4D Observations in the Wild},
+    author  = {Fradlin, Ilya and Schmidt, Christian and Piekenbrinck, Jens and Knaebel, Karim and Martin Garcia, Gonzalo and Leibe, Bastian},
+    year    = 2026,
+    journal = {arXiv preprint arXiv:2610.01314},
+}
+```
+
+The encoder is Depth Anything 3's ViT-Giant (DINOv2). Upstream's code is MIT-licensed, and its model layers are Apache-2.0. The weights are for non-commercial use and are also subject to Waymo's terms, as upstream's [LICENSE](https://github.com/ifradlin/arrow/blob/main/LICENSE) states. They are downloaded from Hugging Face, not redistributed here.
+
+## License
+
+[MPL-2.0](LICENSE). Upstream's notices are in [NOTICE](NOTICE).

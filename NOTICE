@@ -1,0 +1,15 @@
+arrow-swift
+Copyright (c) 2026 Mel Massadian
+Licensed under the Mozilla Public License 2.0 (see LICENSE).
+
+This is a port of ARROW (https://github.com/ifradlin/arrow):
+
+  Copyright (c) 2026 Ilya Fradlin (ARROW), MIT License.
+  The DA3/DINOv2 encoder, decoder and model layers it adapts:
+  Copyright (c) Meta Platforms, Inc. and affiliates, Apache License 2.0.
+
+The full upstream terms are in its LICENSE file:
+https://github.com/ifradlin/arrow/blob/main/LICENSE
+
+The pretrained weights are not part of this repository. They are downloaded
+from https://huggingface.co/ifradlin/arrow under their own terms.
