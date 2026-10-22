@@ -15,10 +15,11 @@ This is an independent port. The model, its weights and the method are the work 
 
 ## Demo App (Quiver)
 <p align="center">
-  <img width="128" height="128" alt="image" src="https://github.com/user-attachments/assets/d5806226-d4d3-4e06-8afd-13359ebd15b1" />
+  <img width="128" height="128" alt=“the quiver mac demo app icon" src="https://github.com/user-attachments/assets/bc7f9ceb-b7bf-4000-b9f2-abd679c8667e" />
 </p>
 
-<img width="2296" height="1394" alt="image" src="https://github.com/user-attachments/assets/5f0f04f5-a7b1-4aa3-b25a-24281be54d9b" />
+<img width="2052" height="1374" alt="demo app screenshot: moving vs separate-tracks"  src="https://github.com/user-attachments/assets/91f9159f-5f82-4f21-ada0-e9fa10cefb30" />
+
 
 ```sh
 scripts/build-app.sh --open
