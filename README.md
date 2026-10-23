@@ -36,19 +36,19 @@ This builds `build/Quiver.app` and opens it. The build goes through `xcodebuild`
 
 **Input.** Open a video, a folder of images or a single image, or drop one on the window. There are two ways to pick frames:
 - **Spread** takes N frames evenly across the clip.
-- **Range** takes every k-th frame from one frame to another, so it can read every frame of a clip.
+- **Range** takes every k-th frame from one frame to another, up to a count: upstream's start, stride and max frames (24 by default), plus an end. With a step of 1 and a high enough count it reads every frame of a clip.
 
-Either way, a run takes at most 300 frames. **Add Camera…** adds another video of the same scene for multi-view input (see [Multi-view](#multi-view)).
+**Add Camera…** adds another video of the same scene for multi-view input (see [Multi-view](#multi-view)).
 
 **Tasks.**
-- **3D tracking**: points from one frame, followed through every frame.
+- **3D tracking**: points from one frame, followed through every frame. **All pixels** tracks every N-th pixel of the clip once instead (upstream's all-pixel tracking): the start frame's whole grid, then, frame by frame, the pixels that no earlier track was seen at.
 - **3D reconstruction**: every frame's pixels in the first frame's camera.
 - **Camera poses**: a rigid fit and intrinsics per frame.
 - **Video depth**: each frame in its own camera.
 
 **Skip sky** (off by default) leaves sky pixels unasked, as upstream does, so outdoor clips lose their stray far points. The segmenter is upstream's [skyseg](https://huggingface.co/JianyuanWang/skyseg) converted to Core ML ([melmass/skyseg-coreml](https://huggingface.co/melmass/skyseg-coreml), 84 MB, downloaded on first use) and runs on the Neural Engine at about 17 ms per frame.
 
-**Seeds.** Drag a region on the frame to bound the seed grid, or click points to track exactly those pixels. Seeds belong to the frame they were placed on, and tracks start from that frame. **Inspect…** zooms in to 1600% to check the exact query pixels.
+**Seeds.** Drag a region on the frame to bound the seed grid, or click points to track exactly those pixels. Seeds belong to the frame they were placed on, and tracks start from that frame. **Inspect…** zooms in to 1600% to check the exact query pixels. With **All pixels**, the region and clicked points are set aside and tracks start from the frame shown. Each frame's seeds depend on where the earlier tracks went, so its tracks are decoded before the next frame is seeded, and they appear frame by frame as the run streams in.
 
 **Display.** These follow the upstream viewer:
 - a confidence filter, starting at upstream's "recommended" cut;
@@ -72,6 +72,7 @@ let frames = try await FrameSet.load(.video(url), selection: .spread(16), maxSid
 let runner = try await ArrowRunner.load()          // downloads the weights on first use
 var settings = TaskSettings()
 settings.trackStride = 12                          // a seed every 12 px
+// or: settings.trackAllPixels = true; settings.allPixelsStride = 4
 let result = try await runner.run(frames, tasks: [.track, .reconstruct, .pose], settings: settings)
 
 let tracks = TrackSet(result, result.group(.track)!)
@@ -82,7 +83,8 @@ try ResultArchive.write(result, sources: [url], to: URL(filePath: "scene.quiver"
 
 - ARROW encodes a set of frames once, then answers *queries* against that encoding: the 3D point seen at a pixel of a source frame, located in a target frame and expressed in a reference camera.
 - `ArrowRunner` keeps the last encoding, so asking new questions about the same frames skips the encoder. The decoder's keys and values depend only on the frames, so they are computed once per encoding and shared by every chunk of queries.
-- Each task is a block of queries (`TaskSettings.queries`), and `ArrowResult.groups` says where each block sits.
+- Each task is a block of queries (`TaskSettings.queries`), and `ArrowResult.groups` says where each block sits. All-pixel tracking is the exception: its block grows frame by frame (`PixelCoverage`), and ends up laid out like any other track group.
+- `run` streams its progress: `started` gives the queries before any answer, then `answered` chunks fill them in. All-pixel tracking adds `grew`, the run laid out anew with another frame's tracks, and `placed` chunks for them.
 - Cameras come back in the frame that tracks and reconstruction are expressed in: frame 0, which is the identity.
 
 ## Multi-view
@@ -91,7 +93,7 @@ Several synchronized videos of one scene are one frame set. Frame `t · views + 
 
 ```swift
 let frames = try await FrameSet.load(views: [.video(left), .video(right)],
-                                     selection: .range(start: 0, end: 48, step: 2, limit: 300))
+                                     selection: .range(start: 0, end: 48, step: 2, limit: 24))
 ```
 
 - The streams must already be aligned frame for frame; nothing estimates a time offset. Cameras of different lengths are read over the shortest.
@@ -107,15 +109,17 @@ ARROW's encoder attends across every frame, and every query reads every frame's 
 
 On an M1 Pro (16 GB), 8 frames at 504 × 280 encode in about 8 s, and 95,000 queries take about 16 s.
 
-The decoder's keys and values take about 30 MB per frame at 504 px, on top of 2.6 GB of fp16 weights. Up to 2 GB of them (about 70 frames at 504 px) are computed once and kept. Past that, only the projected patches are kept, a sixteenth of the size, and each batch of queries recomputes the keys and values one block at a time. The answers are identical, and each batch takes a little longer. `ArrowModel.encode(_:memoryBudget:)` sets the limit. Time still grows with the number of frames, because every query reads all of them. The 300-frame limit is the app's, not the model's.
+The decoder's keys and values take about 30 MB per frame at 504 px, on top of 2.6 GB of fp16 weights. Up to 2 GB of them (about 70 frames at 504 px) are computed once and kept. Past that, only the projected patches are kept, a sixteenth of the size, and each batch of queries recomputes the keys and values one block at a time. The answers are identical, and each batch takes a little longer. `ArrowModel.encode(_:memoryBudget:)` sets the limit. Time still grows with the number of frames, because every query reads all of them. Neither the model nor the app caps the frame count; Quiver warns past 48 images.
+
+All-pixel tracking adds a block of tracks per frame, each asked in every frame. On the same M1 Pro, 8 frames at 504 × 280 with a pixel every 4 px gave 18,000 tracks (145,000 queries); with reconstruction and poses, the run took 45 s to decode.
 
 ## Tests
 
 ```sh
-packages/ArrowKit/test.sh                        # queries, grids, poses, frame selection, multi-view folding
+packages/ArrowKit/test.sh                        # queries, grids, poses, frame selection, multi-view folding, all-pixel seeding
 ARROW_MODEL_TESTS=1 packages/ArrowKit/test.sh    # + parity against PyTorch (needs the weights)
-ARROW_MODEL_TESTS=1 ARROW_CLIP=/path/to/railway.mp4 packages/ArrowKit/test.sh   # + end to end, one and two cameras
-(cd apps/Quiver && swift test)                   # scene building, USD export, archives, seeds
+ARROW_MODEL_TESTS=1 ARROW_CLIP=/path/to/railway.mp4 packages/ArrowKit/test.sh   # + end to end: one and two cameras, all pixels
+(cd apps/Quiver && swift test)                   # scene building, streaming, USD export, archives, seeds
 ```
 
 - `test.sh` wraps `swift test` and puts MLX's shaders where MLX looks for them.

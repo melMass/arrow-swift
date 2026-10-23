@@ -52,10 +52,6 @@ final class Session {
         var id: Self { self }
     }
 
-    /// The most timesteps a run takes. Encoding attends across every frame and each query
-    /// reads all of them, so memory and time grow with the count.
-    static let frameLimit = 300
-
     /// One video or image folder per camera; several are synchronized views of one scene,
     /// aligned frame for frame.
     var sources: [URL] = []
@@ -74,10 +70,13 @@ final class Session {
     var sampling: Sampling = .spread
     /// Frames taken evenly across the input.
     var frameCount = 8
-    /// Every `rangeStep`-th frame from `rangeStart` to `rangeEnd` (inclusive), 0-based.
+    /// Every `rangeStep`-th frame from `rangeStart` to `rangeEnd` (inclusive), 0-based, the
+    /// first `rangeLimit` of them: upstream's start, stride and max frames (24 by default),
+    /// plus an end.
     var rangeStart = 0
     var rangeEnd = 0
     var rangeStep = 1
+    var rangeLimit = 24
     /// The long side the model sees, in pixels (a multiple of 14).
     var maxSide = 504
     var tasks: Set<ArrowTask> = [.track, .reconstruct, .pose]
@@ -151,7 +150,7 @@ final class Session {
     var selection: FrameSelection {
         switch sampling {
         case .spread: .spread(frameCount)
-        case .range: .range(start: rangeStart, end: rangeEnd + 1, step: max(rangeStep, 1), limit: Self.frameLimit)
+        case .range: .range(start: rangeStart, end: rangeEnd + 1, step: max(rangeStep, 1), limit: max(rangeLimit, 1))
         }
     }
 
@@ -236,9 +235,9 @@ final class Session {
                     for input in inputs { shortest = min(shortest, try await input.frameCount()) }
                     self.sourceFrames = shortest
                 }
-                // A range starts out as the first `frameLimit` frames.
+                // A range starts out spanning the whole input.
                 if sampling == .range, let shortest = self.sourceFrames, self.rangeEnd == 0 || self.rangeEnd >= shortest {
-                    self.rangeEnd = min(shortest, Self.frameLimit) - 1
+                    self.rangeEnd = shortest - 1
                 }
                 let frames = try await FrameSet.load(views: inputs, selection: self.selection, maxSide: side)
                 try Task.checkCancellation()

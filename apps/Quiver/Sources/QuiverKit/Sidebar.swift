@@ -163,8 +163,7 @@ struct Sidebar: View {
         .sheet(isPresented: $inspecting) { QueryInspector(session: session) }
     }
 
-    /// Frames spread over the input, or every step-th frame of a range, up to
-    /// `Session.frameLimit` timesteps.
+    /// Frames spread over the input, or every step-th frame of a range, up to a count.
     @ViewBuilder private var sampling: some View {
         Picker("Frames", selection: $session.sampling) {
             ForEach(Session.Sampling.allCases) { Text($0.rawValue).tag($0) }
@@ -174,7 +173,7 @@ struct Sidebar: View {
         let last = max((session.sourceFrames ?? 1) - 1, 0)
         switch session.sampling {
         case .spread:
-            Stepper("\(session.frameCount) frames, evenly spread", value: $session.frameCount, in: 2 ... Session.frameLimit,
+            Stepper("\(session.frameCount) frames, evenly spread", value: $session.frameCount, in: 2 ... max(last + 1, 2),
                     step: session.frameCount >= 48 ? 8 : session.frameCount >= 24 ? 4 : 1)
                 .onChange(of: session.frameCount) { readSoon() }
         case .range:
@@ -185,11 +184,14 @@ struct Sidebar: View {
             Stepper(session.rangeStep == 1 ? "Every frame" : "Every \(session.rangeStep) frames",
                     value: $session.rangeStep, in: 1 ... 60)
                 .onChange(of: session.rangeStep) { readSoon() }
+            Stepper("At most \(session.rangeLimit) frames", value: $session.rangeLimit, in: 1 ... last + 1,
+                    step: session.rangeLimit >= 48 ? 8 : session.rangeLimit >= 24 ? 4 : 1)
+                .onChange(of: session.rangeLimit) { readSoon() }
         }
         if let total = session.sourceFrames, let count = session.selectedCount {
             let views = max(session.sources.count, 1)
             Text("\(count) of \(total) frames\(views > 1 ? " × \(views) cameras = \(count * views) images" : "")"
-                 + (session.sampling == .range && count == Session.frameLimit ? ", the first \(Session.frameLimit)" : ""))
+                 + (session.sampling == .range && count == session.rangeLimit ? ", the first \(session.rangeLimit) of the range" : ""))
                 .font(.caption).foregroundStyle(.secondary)
             if count * views > 48 {
                 Text("Encoding attends across every frame and each query reads all of them: long sets take far more memory and time. A smaller long side helps.")
