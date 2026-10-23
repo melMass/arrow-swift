@@ -2,7 +2,7 @@
 # into an app: xcodebuild builds it.
 kind: mlx
 bundle_id: com.mtb.quiver
-version: "0.1.0"
+version: "0.2.0"
 category: public.app-category.graphics-design
 min_os: "15.0"
 icon: "Quiver.icns"
